@@ -1,21 +1,25 @@
 %define kmod_name		igb
-%define kmod_driver_version	3.0.6_k
-%define kmod_rpm_release	2
-%define kmod_kernel_version	2.6.32-131.17.1.el6
-%define kmod_suffix		rhel6u1
+%define kmod_driver_version	5.2.15_k
+%define kmod_rpm_release	1
+%define kmod_git_hash		9123a81bee97aaf316f13f1f7719be6da659ca90
+%define kmod_kernel_version	2.6.32-573.el6
+%define kernel_version		2.6.32-573.el6
+%define kmod_kbuild_dir		drivers/net/igb/
 
 
-%{!?dist: %define dist .el6}
+%{!?dist: %define dist .el6_6}
 
-Source0:	%{kmod_name}-%{kmod_driver_version}.tar.bz2			
-Source1:	%{kmod_name}.files			
-Source2:	%{kmod_name}.conf			
-Source3:	find-requires.ksyms			
-Source4:	find-provides.ksyms			
-Source5:	kmodtool			
+Source0:	%{kmod_name}-%{kmod_driver_version}.tar.bz2
+Source1:	%{kmod_name}.files
+Source2:	depmodconf
+Source3:	find-requires.ksyms
+Source4:	find-provides.ksyms
+Source5:	kmodtool
+
+Patch0:		igb.patch
 
 %define __find_requires %_sourcedir/find-requires.ksyms
-%define __find_provides %_sourcedir/find-provides.ksyms
+%define __find_provides %_sourcedir/find-provides.ksyms %{kmod_name} %{?epoch:%{epoch}:}%{version}-%{release}
 
 Name:		%{kmod_name}
 Version:	%{kmod_driver_version}
@@ -26,7 +30,7 @@ Group:		System/Kernel
 License:	GPLv2
 URL:		http://www.kernel.org/
 BuildRoot:	%(mktemp -ud %{_tmppath}/%{name}-%{version}-%{release}-XXXXXX)
-BuildRequires:	%kernel_module_package_buildreqs
+BuildRequires:	%kernel_module_package_buildreqs kernel-devel = %kmod_kernel_version
 ExclusiveArch:  i686 x86_64
 
 
@@ -39,6 +43,7 @@ ExclusiveArch:  i686 x86_64
 
 %prep
 %setup
+%patch0 -p1
 set -- *
 mkdir source
 mv "$@" source/
@@ -52,11 +57,24 @@ for flavor in %flavors_to_build; do
 	# update symvers file if existing
 	symvers=source/Module.symvers-%{_target_cpu}
 	if [ -e $symvers ]; then
-		cp $symvers obj/$flavor/Module.symvers
+		cp $symvers obj/$flavor/%{kmod_kbuild_dir}/Module.symvers
 	fi
 
-	make -C %{kernel_source $flavor} M=$PWD/obj/$flavor
+	make -C %{kernel_source $flavor} M=$PWD/obj/$flavor/%{kmod_kbuild_dir} \
+		NOSTDINC_FLAGS="-I $PWD/obj/$flavor/include"
+
+	# mark modules executable so that strip-to-file can strip them
+	find obj/$flavor/%{kmod_kbuild_dir} -name "*.ko" -type f -exec chmod u+x '{}' +
 done
+
+%{SOURCE2} %{name} %{kmod_kernel_version} obj > source/depmod.conf
+
+greylist=source/symbols.greylist-%{_target_cpu}
+if [ -f $greylist ]; then
+	cp $greylist source/symbols.greylist
+else
+	touch source/symbols.greylist
+fi
 
 if [ -d source/firmware ]; then
 	make -C source/firmware
@@ -67,12 +85,13 @@ export INSTALL_MOD_PATH=$RPM_BUILD_ROOT
 export INSTALL_MOD_DIR=extra/%{name}
 for flavor in %flavors_to_build ; do
 	make -C %{kernel_source $flavor} modules_install \
-		M=$PWD/obj/$flavor
+		M=$PWD/obj/$flavor/%{kmod_kbuild_dir}
 	# Cleanup unnecessary kernel-generated module dependency files.
 	find $INSTALL_MOD_PATH/lib/modules -iname 'modules.*' -exec rm {} \;
 done
 
-install -m 644 -D %{SOURCE2} $RPM_BUILD_ROOT/etc/depmod.d/%{kmod_name}.conf
+install -m 644 -D source/depmod.conf $RPM_BUILD_ROOT/etc/depmod.d/%{kmod_name}.conf
+install -m 644 -D source/symbols.greylist $RPM_BUILD_ROOT/usr/share/doc/kmod-%{kmod_name}/greylist.txt
 
 if [ -d source/firmware ]; then
 	make -C source/firmware INSTALL_PATH=$RPM_BUILD_ROOT INSTALL_DIR=updates install
@@ -82,8 +101,6 @@ fi
 rm -rf $RPM_BUILD_ROOT
 
 %changelog
-* Mon Nov 07 2011 Jiri Olsa <jolsa@redhat.com> 3.0.6_k 2
-- changing kernel version
-
-* Mon Nov 07 2011 Jiri Olsa <jolsa@redhat.com> 3.0.6_k 1
+* Mon Jan 04 2016 Petr Oros <poros@redhat.com> 5.2.15_k 1
+- Resolves: #1288432
 - igb DUP module

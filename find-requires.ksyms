@@ -20,6 +20,8 @@ all_requires() {
     | sort -k2 -u
 }
 
+rm -rf /tmp/krava
+
 if ! [ -e /sbin/modinfo -a -e /sbin/modprobe ]; then
     cat > /dev/null
     exit 0
